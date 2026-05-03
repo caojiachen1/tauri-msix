@@ -64,6 +64,34 @@ pub fn setup_msix_script(config: &AppConfig) -> Result<()> {
     Ok(())
 }
 
+/// Add `*.msix` to the project's .gitignore if not already present.
+pub fn add_gitignore_entry(config: &AppConfig) -> Result<()> {
+    let gitignore = config.project_root.join(".gitignore");
+
+    let mut content = if gitignore.exists() {
+        std::fs::read_to_string(&gitignore)
+            .context("Failed to read .gitignore")?
+    } else {
+        String::new()
+    };
+
+    if content.lines().any(|l| l.trim() == "*.msix") {
+        println!("  *.msix already in .gitignore, skipping.");
+        return Ok(());
+    }
+
+    if !content.is_empty() && !content.ends_with('\n') {
+        content.push('\n');
+    }
+    content.push_str("*.msix\n");
+
+    std::fs::write(&gitignore, content)
+        .context("Failed to write .gitignore")?;
+
+    println!("  Added '*.msix' to .gitignore");
+    Ok(())
+}
+
 fn generate_bat_script(config: &AppConfig) -> String {
     let exe_name = &config.exe_name;
     let exe_path = format!(".\\src-tauri\\target\\release\\{}.exe", exe_name);

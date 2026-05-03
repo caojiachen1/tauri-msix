@@ -82,9 +82,10 @@ fn run() -> Result<()> {
     println!("\n[2/6] Generating appxmanifest.xml...");
     manifest::generate_manifest(&app_config, &cli.publisher)?;
 
-    // Step 3: Generate msix.bat and inject npm run msix script
-    println!("\n[3/6] Setting up msix.bat and npm run msix...");
+    // Step 3: Generate msix.bat, inject npm run msix, add *.msix to .gitignore
+    println!("\n[3/6] Setting up msix.bat, npm run msix, .gitignore...");
     package::setup_msix_script(&app_config)?;
+    package::add_gitignore_entry(&app_config)?;
 
     // Step 4: Ensure toolchain is ready (winapp, build)
     println!("\n[4/6] Preparing toolchain...");

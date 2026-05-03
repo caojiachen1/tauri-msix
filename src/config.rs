@@ -22,6 +22,8 @@ struct TauriConfig {
     pub identifier: Option<String>,
     #[serde(default)]
     pub version: Option<String>,
+    #[serde(default)]
+    pub bundle: Option<BundleConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -35,7 +37,15 @@ struct TauriConfJson {
     #[serde(default)]
     pub app: Option<TauriAppSection>,
     #[serde(default)]
+    pub bundle: Option<BundleConfig>,
+    #[serde(default)]
     pub tauri: Option<TauriConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BundleConfig {
+    #[serde(default)]
+    pub icon: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -97,10 +107,13 @@ pub fn detect_config(project_path: &Path, icon_override: Option<&Path>) -> Resul
 
     let version = normalize_version(&raw_version);
 
-    let exe_name = product_name.clone();
+    // Cargo.toml [package] name determines the exe filename and display name
+    let cargo_name = read_cargo_toml_name(&src_tauri_dir);
 
-    // Resolve display name: Cargo.toml package name > tauri window title > product name
-    let display_name = read_cargo_toml_name(&src_tauri_dir)
+    let exe_name = cargo_name.clone().unwrap_or_else(|| product_name.clone());
+
+    // Resolve display name: Cargo.toml name > tauri window title > product name
+    let display_name = cargo_name
         .or_else(|| {
             conf.app
                 .as_ref()
@@ -111,20 +124,41 @@ pub fn detect_config(project_path: &Path, icon_override: Option<&Path>) -> Resul
 
     let description = format!("{} application", display_name);
 
-    // Icon path: CLI override > auto-detect > default
+    // Icon path: CLI override > tauri.conf.json bundle.icon > auto-detect > default
     let icon_path = if let Some(ico) = icon_override {
         ico.to_path_buf()
     } else {
-        let candidates = [
-            project_root.join("src-tauri").join("icons").join("icon.png"),
-            project_root.join("icons").join("icon.png"),
-            project_root.join("app-icon.png"),
-        ];
-        candidates
-            .iter()
-            .find(|p| p.exists())
-            .cloned()
-            .unwrap_or_else(|| PathBuf::from("icon.png"))
+        // Read from tauri.conf.json bundle.icon (both v1 and v2 formats)
+        let bundle_icons: Option<Vec<String>> = conf
+            .bundle
+            .as_ref()
+            .and_then(|b| b.icon.clone())
+            .or_else(|| {
+                conf.tauri
+                    .as_ref()
+                    .and_then(|t| t.bundle.as_ref().and_then(|b| b.icon.clone()))
+            });
+
+        if let Some(icons) = bundle_icons {
+            // Pick the first .png from the icon list, typically the largest one
+            let png_icon = icons.iter().find(|i| i.ends_with(".png"));
+            let icon_rel = png_icon.unwrap_or(&icons[0]);
+            let resolved = src_tauri_dir.join(icon_rel);
+            if resolved.exists() {
+                resolved
+            } else {
+                // Also try relative to project root
+                let pr_resolved = project_root.join(icon_rel);
+                if pr_resolved.exists() {
+                    pr_resolved
+                } else {
+                    eprintln!("  Warning: Icon from tauri.conf.json not found: {}", icon_rel);
+                    fallback_icon_path(&project_root)
+                }
+            }
+        } else {
+            fallback_icon_path(&project_root)
+        }
     };
 
     Ok(AppConfig {
@@ -181,6 +215,19 @@ fn read_cargo_toml_name(src_tauri_dir: &Path) -> Option<String> {
         }
     }
     None
+}
+
+fn fallback_icon_path(project_root: &Path) -> PathBuf {
+    let candidates = [
+        project_root.join("src-tauri").join("icons").join("icon.png"),
+        project_root.join("icons").join("icon.png"),
+        project_root.join("app-icon.png"),
+    ];
+    candidates
+        .iter()
+        .find(|p| p.exists())
+        .cloned()
+        .unwrap_or_else(|| PathBuf::from("icon.png"))
 }
 
 fn read_package_json_name(project_root: &Path) -> Option<String> {
