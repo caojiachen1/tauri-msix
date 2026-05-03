@@ -1,0 +1,13 @@
+[package]
+name = "tauri-msix"
+version = "0.1.0"
+edition = "2021"
+description = "CLI tool to automatically add MSIX packaging capability to Tauri projects"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tera = "1"
+asset-generator = { git = "https://github.com/caojiachen1/asset-generator" }
+anyhow = "1"
