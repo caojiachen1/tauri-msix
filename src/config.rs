@@ -140,21 +140,28 @@ pub fn detect_config(project_path: &Path, icon_override: Option<&Path>) -> Resul
             });
 
         if let Some(icons) = bundle_icons {
-            // Pick the first .png from the icon list, typically the largest one
-            let png_icon = icons.iter().find(|i| i.ends_with(".png"));
-            let icon_rel = png_icon.unwrap_or(&icons[0]);
-            let resolved = src_tauri_dir.join(icon_rel);
-            if resolved.exists() {
-                resolved
-            } else {
-                // Also try relative to project root
-                let pr_resolved = project_root.join(icon_rel);
-                if pr_resolved.exists() {
-                    pr_resolved
+            // Prefer icon named "icon.png" (typically the largest), skip .icns (macOS, unsupported)
+            let icon_rel = icons
+                .iter()
+                .find(|i| file_stem_is(i, "icon") && i.ends_with(".png"))
+                .or_else(|| icons.iter().find(|i| i.ends_with(".png")));
+
+            if let Some(icon_rel) = icon_rel {
+                let resolved = src_tauri_dir.join(icon_rel);
+                if resolved.exists() {
+                    resolved
                 } else {
-                    eprintln!("  Warning: Icon from tauri.conf.json not found: {}", icon_rel);
-                    fallback_icon_path(&project_root)
+                    let pr_resolved = project_root.join(icon_rel);
+                    if pr_resolved.exists() {
+                        pr_resolved
+                    } else {
+                        eprintln!("  Warning: Icon from tauri.conf.json not found: {}", icon_rel);
+                        fallback_icon_path(&project_root)
+                    }
                 }
+            } else {
+                // No .png found in bundle.icon — fall back to auto-detect
+                fallback_icon_path(&project_root)
             }
         } else {
             fallback_icon_path(&project_root)
@@ -215,6 +222,14 @@ fn read_cargo_toml_name(src_tauri_dir: &Path) -> Option<String> {
         }
     }
     None
+}
+
+fn file_stem_is(path: &str, name: &str) -> bool {
+    Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(|s| s == name)
+        .unwrap_or(false)
 }
 
 fn fallback_icon_path(project_root: &Path) -> PathBuf {
