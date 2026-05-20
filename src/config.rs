@@ -124,11 +124,14 @@ pub fn detect_config(project_path: &Path, icon_override: Option<&Path>) -> Resul
 
     let description = format!("{} application", display_name);
 
-    // Icon path: CLI override > tauri.conf.json bundle.icon > auto-detect > default
+    // Icon path: CLI override > exact icon.png in common locations > tauri.conf.json bundle.icon > fallback
     let icon_path = if let Some(ico) = icon_override {
         ico.to_path_buf()
     } else {
-        // Read from tauri.conf.json bundle.icon (both v1 and v2 formats)
+        if let Some(preferred_icon) = preferred_icon_path(&project_root) {
+            preferred_icon
+        } else {
+            // Read from tauri.conf.json bundle.icon (both v1 and v2 formats)
         let bundle_icons: Option<Vec<String>> = conf
             .bundle
             .as_ref()
@@ -139,12 +142,10 @@ pub fn detect_config(project_path: &Path, icon_override: Option<&Path>) -> Resul
                     .and_then(|t| t.bundle.as_ref().and_then(|b| b.icon.clone()))
             });
 
-        if let Some(icons) = bundle_icons {
-            // Prefer icon named "icon.png" (typically the largest), skip .icns (macOS, unsupported)
-            let icon_rel = icons
-                .iter()
-                .find(|i| file_stem_is(i, "icon") && i.ends_with(".png"))
-                .or_else(|| icons.iter().find(|i| i.ends_with(".png")));
+            if let Some(icons) = bundle_icons {
+            // Prefer the exact filename "icon.png" first, then fall back to any other PNG.
+            // This avoids accidentally picking smaller variants like "icon-256.png".
+            let icon_rel = select_bundle_icon(&icons);
 
             if let Some(icon_rel) = icon_rel {
                 let resolved = src_tauri_dir.join(icon_rel);
@@ -163,8 +164,9 @@ pub fn detect_config(project_path: &Path, icon_override: Option<&Path>) -> Resul
                 // No .png found in bundle.icon — fall back to auto-detect
                 fallback_icon_path(&project_root)
             }
-        } else {
-            fallback_icon_path(&project_root)
+            } else {
+                fallback_icon_path(&project_root)
+            }
         }
     };
 
@@ -224,12 +226,29 @@ fn read_cargo_toml_name(src_tauri_dir: &Path) -> Option<String> {
     None
 }
 
-fn file_stem_is(path: &str, name: &str) -> bool {
+fn file_name_is(path: &str, name: &str) -> bool {
     Path::new(path)
-        .file_stem()
+        .file_name()
         .and_then(|s| s.to_str())
         .map(|s| s == name)
         .unwrap_or(false)
+}
+
+fn select_bundle_icon(icons: &[String]) -> Option<&str> {
+    icons
+        .iter()
+        .map(|s| s.as_str())
+        .find(|i| file_name_is(i, "icon.png"))
+        .or_else(|| icons.iter().map(|s| s.as_str()).find(|i| i.ends_with(".png")))
+}
+
+fn preferred_icon_path(project_root: &Path) -> Option<PathBuf> {
+    let candidates = [
+        project_root.join("src-tauri").join("icons").join("icon.png"),
+        project_root.join("icons").join("icon.png"),
+    ];
+
+    candidates.iter().find(|p| p.exists()).cloned()
 }
 
 fn fallback_icon_path(project_root: &Path) -> PathBuf {
@@ -269,5 +288,49 @@ mod tests {
         assert_eq!(normalize_version("1.2"), "1.2.0.0");
         assert_eq!(normalize_version("1.2.3"), "1.2.3.0");
         assert_eq!(normalize_version("1.2.3.4"), "1.2.3.4");
+    }
+
+    #[test]
+    fn test_select_bundle_icon_prefers_exact_icon_png() {
+        let icons = vec![
+            "icons/icon-256.png".to_string(),
+            "src-tauri/icons/icon.png".to_string(),
+            "icons/icon-512.png".to_string(),
+        ];
+
+        assert_eq!(select_bundle_icon(&icons), Some("src-tauri/icons/icon.png"));
+    }
+
+    #[test]
+    fn test_select_bundle_icon_falls_back_to_any_png() {
+        let icons = vec![
+            "icons/icon.ico".to_string(),
+            "icons/app.png".to_string(),
+            "icons/app.icns".to_string(),
+        ];
+
+        assert_eq!(select_bundle_icon(&icons), Some("icons/app.png"));
+    }
+
+    #[test]
+    fn test_preferred_icon_path_wins_over_bundle_icons() {
+        let base = std::env::temp_dir().join(format!(
+            "tauri_msix_icon_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+
+        let src_icons = base.join("src-tauri").join("icons");
+        std::fs::create_dir_all(&src_icons).unwrap();
+        std::fs::write(src_icons.join("icon.png"), b"x").unwrap();
+
+        assert_eq!(
+            preferred_icon_path(&base),
+            Some(src_icons.join("icon.png"))
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
